@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Gmail QR Auto-Verify",
-  "version": "1.1.0",
-  "description": "Automatically handles Google QR verification during account creation",
+  "version": "1.2.0",
+  "description": "Handles Google QR verification during account creation",
   "permissions": [
     "activeTab",
     "scripting",
@@ -19,21 +19,13 @@
   "content_scripts": [
     {
       "matches": [
-        "https://accounts.google.com/lifecycle/steps/signup/*",
-        "https://accounts.google.com/v3/signin/*",
-        "https://accounts.google.com/lifecycle/*"
+        "https://accounts.google.com/lifecycle/steps/signup/mophoneverification*",
+        "https://accounts.google.com/lifecycle/steps/signup/phoneverification*",
+        "https://accounts.google.com/lifecycle/steps/signup/deviceverification*"
       ],
       "js": ["jsqr.js", "content.js"],
       "run_at": "document_idle",
-      "all_frames": true
-    },
-    {
-      "matches": [
-        "https://accounts.google.com/*"
-      ],
-      "js": ["mobile-verify.js"],
-      "run_at": "document_idle",
-      "all_frames": true
+      "all_frames": false
     }
   ],
   "action": {

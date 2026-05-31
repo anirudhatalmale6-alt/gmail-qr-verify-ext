@@ -4,20 +4,15 @@
 
   let scanning = false;
   let lastDecodedUrl = "";
-  let scanInterval = null;
   let triedAlternatives = false;
 
   function log(msg) {
     console.log("[Gmail QR Verify]", msg);
   }
 
-  function isQrVerificationPage() {
-    const url = window.location.href;
+  function hasQrCodeOnPage() {
     const text = document.body ? document.body.innerText : "";
     return (
-      url.includes("mophoneverification") ||
-      url.includes("phoneverification") ||
-      url.includes("deviceverification") ||
       text.includes("Scan the QR code") ||
       text.includes("Verify some info before creating")
     );
@@ -29,8 +24,8 @@
 
     log("Looking for alternative verification methods...");
 
-    const allLinks = document.querySelectorAll(
-      'a, button, [role="link"], [role="button"], [jsname], [data-action]'
+    const clickables = document.querySelectorAll(
+      'a, button, [role="link"], [role="button"], [jsname], span[tabindex], div[tabindex]'
     );
 
     const altKeywords = [
@@ -38,50 +33,51 @@
       "try a different way",
       "more options",
       "other options",
-      "use phone",
-      "phone number",
+      "use phone number",
       "enter phone",
-      "skip",
-      "i don't have",
       "can't scan",
       "another method",
       "different method",
-      "verify another way",
-      "use another method",
+      "i don't have",
+      "having trouble",
     ];
 
-    for (const el of allLinks) {
+    for (const el of clickables) {
       const text = (el.innerText || el.textContent || "").toLowerCase().trim();
       const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
       const combined = text + " " + ariaLabel;
 
+      if (text.length > 100) continue;
+
       for (const kw of altKeywords) {
         if (combined.includes(kw)) {
           log(`Found alternative: "${text}" - clicking it`);
-          showBanner(`Found "${text}" option - clicking...`, "working");
+          showBanner(`Found "${text}" - clicking...`, "working");
           el.click();
           return true;
         }
       }
     }
 
-    const smallLinks = document.querySelectorAll(
-      'a[href], span[tabindex], div[tabindex], [class*="link"], [class*="secondary"]'
-    );
-    for (const el of smallLinks) {
-      const text = (el.innerText || el.textContent || "").toLowerCase().trim();
-      if (text.length > 3 && text.length < 50) {
-        const style = window.getComputedStyle(el);
-        if (style.color.includes("66") || style.color.includes("138") ||
-            style.textDecoration.includes("underline") ||
-            el.tagName === "A") {
-          log(`Potential link found: "${text}"`);
-        }
-      }
-    }
-
-    log("No alternative verification methods found on page");
+    log("No alternative verification links found");
     return false;
+  }
+
+  function tryAlternativeUrls() {
+    const currentUrl = window.location.href;
+
+    const altPaths = [
+      currentUrl.replace("mophoneverification", "phoneverification"),
+      currentUrl.replace("mophoneverification", "smsverification"),
+      currentUrl.replace("/mophoneverification/initial", "/phonenumber/initial"),
+    ];
+
+    log("Will try alternative verification URLs...");
+    chrome.runtime.sendMessage({
+      type: "TRY_ALT_URLS",
+      urls: altPaths,
+      currentUrl: currentUrl,
+    });
   }
 
   function findQrCodeElements() {
@@ -105,13 +101,6 @@
       const rect = svg.getBoundingClientRect();
       if (rect.width >= 100 && rect.height >= 100 && Math.abs(rect.width - rect.height) < 50) {
         candidates.push({ type: "svg", el: svg });
-      }
-    });
-
-    document.querySelectorAll('div[role="img"], div[data-qr], [class*="qr"], [id*="qr"]').forEach((div) => {
-      const rect = div.getBoundingClientRect();
-      if (rect.width >= 100 && rect.height >= 100) {
-        candidates.push({ type: "div", el: div });
       }
     });
 
@@ -150,17 +139,14 @@
         return;
       }
 
-      if (element.type === "svg" || element.type === "div") {
+      if (element.type === "svg") {
         const el = element.el;
         const rect = el.getBoundingClientRect();
         const size = Math.max(rect.width, rect.height);
         canvas.width = size * 2;
         canvas.height = size * 2;
 
-        const svgEl = element.type === "svg" ? el : el.querySelector("svg");
-        if (!svgEl) { resolve(null); return; }
-
-        const svgData = new XMLSerializer().serializeToString(svgEl);
+        const svgData = new XMLSerializer().serializeToString(el);
         const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
         const url = URL.createObjectURL(svgBlob);
         const img = new Image();
@@ -218,69 +204,14 @@
 
   function handleDecodedUrl(url) {
     log(`QR URL decoded: ${url}`);
-    showBanner(`QR Code detected! Opening verification page...`, "working");
 
-    chrome.runtime.sendMessage(
-      {
-        type: "QR_DECODED",
-        url: url,
-        pageUrl: window.location.href,
-      },
-      (response) => {
-        if (response && response.success) {
-          log("Background opened verification tab");
-          showBanner(
-            "Verification tab opened! Check the new tab - enter your phone number there if asked.",
-            "working"
-          );
-          pollForCompletion();
-        } else {
-          log("Failed to open verification tab");
-          showBanner("Could not open verification tab. URL: " + url, "error");
-        }
-      }
-    );
-  }
+    showBanner(`QR decoded! URL: ${url.substring(0, 80)}...`, "working");
 
-  function pollForCompletion() {
-    let checks = 0;
-    const maxChecks = 120;
-
-    const poll = setInterval(() => {
-      checks++;
-
-      const isStillOnQr = isQrVerificationPage();
-      if (!isStillOnQr) {
-        clearInterval(poll);
-        showBanner("Verification complete! Continuing signup...", "success");
-        log("QR verification page is gone - verification succeeded!");
-        return;
-      }
-
-      const continueBtn = findContinueButton();
-      if (continueBtn) {
-        clearInterval(poll);
-        showBanner("Verification complete! Clicking continue...", "success");
-        continueBtn.click();
-        return;
-      }
-
-      if (checks >= maxChecks) {
-        clearInterval(poll);
-        showBanner("Still waiting for verification. Complete it in the other tab.", "working");
-      }
-    }, 2000);
-  }
-
-  function findContinueButton() {
-    const buttons = document.querySelectorAll("button, [role='button']");
-    for (const btn of buttons) {
-      const text = (btn.innerText || btn.textContent || "").toLowerCase();
-      if (text.includes("continue") || text.includes("next") || text.includes("proceed")) {
-        return btn;
-      }
-    }
-    return null;
+    chrome.runtime.sendMessage({
+      type: "QR_DECODED",
+      url: url,
+      pageUrl: window.location.href,
+    });
   }
 
   function showBanner(message, status) {
@@ -290,7 +221,7 @@
       banner.id = "gmail-qr-verify-banner";
       banner.style.cssText = `
         position: fixed; top: 0; left: 0; right: 0; z-index: 999999;
-        padding: 12px 20px; font-family: Arial, sans-serif; font-size: 14px;
+        padding: 10px 16px; font-family: Arial, sans-serif; font-size: 13px;
         text-align: center; transition: all 0.3s;
         box-shadow: 0 2px 10px rgba(0,0,0,0.2);
       `;
@@ -301,66 +232,59 @@
       working: { bg: "#1a73e8", color: "#fff" },
       success: { bg: "#0d9f0d", color: "#fff" },
       error: { bg: "#d93025", color: "#fff" },
+      info: { bg: "#333", color: "#fff" },
     };
 
-    const c = colors[status] || colors.working;
+    const c = colors[status] || colors.info;
     banner.style.backgroundColor = c.bg;
     banner.style.color = c.color;
     banner.textContent = message;
-
-    if (status === "success") {
-      setTimeout(() => banner.remove(), 8000);
-    }
   }
 
   function startScanning() {
-    if (!isQrVerificationPage()) {
-      log("Not a QR verification page, skipping");
+    if (!hasQrCodeOnPage()) {
+      log("No QR code text found on page, skipping");
       return;
     }
 
     log("QR verification page detected!");
-    showBanner("QR verification detected - looking for alternatives...", "working");
+    showBanner("QR verification page detected - scanning...", "working");
 
     if (tryAlternativeVerification()) {
-      log("Clicked alternative verification option, waiting for page change...");
+      log("Clicked alternative verification option");
       return;
     }
 
-    showBanner("No alternative found - scanning QR code...", "working");
     scanForQrCode();
 
-    scanInterval = setInterval(() => {
-      if (!isQrVerificationPage()) {
+    const scanInterval = setInterval(() => {
+      if (!hasQrCodeOnPage()) {
+        clearInterval(scanInterval);
+        showBanner("Page changed - verification may be complete!", "success");
+        return;
+      }
+      if (lastDecodedUrl) {
         clearInterval(scanInterval);
         return;
       }
-      if (lastDecodedUrl) return;
       scanForQrCode();
-    }, 2000);
+    }, 3000);
+
+    setTimeout(() => {
+      if (lastDecodedUrl) {
+        tryAlternativeUrls();
+      }
+    }, 5000);
   }
 
   if (document.readyState === "complete" || document.readyState === "interactive") {
-    setTimeout(startScanning, 1000);
+    setTimeout(startScanning, 1500);
   } else {
-    document.addEventListener("DOMContentLoaded", () => setTimeout(startScanning, 1000));
-  }
-
-  const observer = new MutationObserver(() => {
-    if (isQrVerificationPage() && !lastDecodedUrl && !scanInterval) {
-      startScanning();
-    }
-  });
-  if (document.body) {
-    observer.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener("DOMContentLoaded", () => setTimeout(startScanning, 1500));
   }
 
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === "VERIFICATION_COMPLETE") {
-      showBanner("Verification complete!", "success");
-    } else if (msg.type === "VERIFICATION_FAILED") {
-      showBanner("Auto-verify had issues. Check the verification tab.", "error");
-    } else if (msg.type === "MANUAL_SCAN") {
+    if (msg.type === "MANUAL_SCAN") {
       lastDecodedUrl = "";
       triedAlternatives = false;
       scanForQrCode();

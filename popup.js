@@ -4,72 +4,76 @@ const urlCard = document.getElementById("urlCard");
 const qrUrlEl = document.getElementById("qrUrl");
 const rescanBtn = document.getElementById("rescanBtn");
 const openUrlBtn = document.getElementById("openUrlBtn");
-const logArea = document.getElementById("logArea");
+const altResults = document.getElementById("altResults");
+const altResultsList = document.getElementById("altResultsList");
 
-function addLog(msg) {
-  const time = new Date().toLocaleTimeString();
-  logArea.textContent += `\n[${time}] ${msg}`;
-  logArea.scrollTop = logArea.scrollHeight;
-}
+qrUrlEl.addEventListener("click", () => {
+  navigator.clipboard.writeText(qrUrlEl.textContent).then(() => {
+    qrUrlEl.style.border = "1px solid #66bb6a";
+    setTimeout(() => (qrUrlEl.style.border = "none"), 1000);
+  });
+});
 
 function updateStatus(status, text, url) {
   statusText.textContent = text;
   statusDot.className = "dot";
-
-  switch (status) {
-    case "idle":
-      statusDot.classList.add("dot-idle");
-      break;
-    case "scanning":
-    case "verifying":
-      statusDot.classList.add("dot-working");
-      break;
-    case "success":
-      statusDot.classList.add("dot-active");
-      break;
-    case "error":
-      statusDot.classList.add("dot-error");
-      break;
-  }
+  statusDot.classList.add(
+    status === "idle" ? "dot-idle" : status === "decoded" ? "dot-active" : "dot-working"
+  );
 
   if (url) {
     urlCard.style.display = "block";
     qrUrlEl.textContent = url;
     openUrlBtn.style.display = "block";
     openUrlBtn.onclick = () => {
-      chrome.tabs.create({ url: url });
+      chrome.runtime.sendMessage({ type: "OPEN_QR_URL" });
     };
   }
+}
+
+function showAltResults(results) {
+  if (!results || results.length === 0) return;
+  altResults.style.display = "block";
+  altResultsList.innerHTML = "";
+
+  results.forEach((r) => {
+    const div = document.createElement("div");
+    if (r.error) {
+      div.textContent = `${r.url.split("/").pop()} - Error`;
+    } else {
+      const phoneTag = r.hasPhoneInput
+        ? '<span class="tag tag-yes">PHONE INPUT</span>'
+        : '<span class="tag tag-no">no input</span>';
+      const redirectTag = r.isRedirectBack
+        ? '<span class="tag tag-no">redirect</span>'
+        : '<span class="tag tag-yes">different page</span>';
+      div.innerHTML = `${r.url.split("/signup/")[1] || r.url.substring(0, 40)} ${phoneTag} ${redirectTag}`;
+    }
+    altResultsList.appendChild(div);
+  });
 }
 
 function refresh() {
   chrome.runtime.sendMessage({ type: "GET_STATUS" }, (response) => {
     if (!response) {
-      updateStatus("idle", "Idle - waiting for QR page");
+      updateStatus("idle", "Idle - navigate to a QR verification page");
       return;
     }
 
-    switch (response.status) {
-      case "idle":
-        updateStatus("idle", "Idle - waiting for QR page");
-        break;
-      case "decoded":
-        updateStatus("scanning", "QR decoded - preparing verification", response.qrUrl);
-        addLog("QR URL: " + response.qrUrl);
-        break;
-      case "verifying":
-        updateStatus("verifying", "Verification in progress...", response.qrUrl);
-        addLog("Verifying in tab " + response.verifyTabId);
-        break;
+    if (response.qrUrl) {
+      updateStatus("decoded", "QR code decoded", response.qrUrl);
+    } else {
+      updateStatus("idle", "Idle - navigate to a QR verification page");
+    }
+
+    if (response.altUrlResults) {
+      showAltResults(response.altUrlResults);
     }
   });
 }
 
 rescanBtn.addEventListener("click", () => {
-  addLog("Requesting rescan...");
-  chrome.runtime.sendMessage({ type: "RETRY_SCAN" }, () => {
-    addLog("Rescan triggered");
-  });
+  chrome.runtime.sendMessage({ type: "RETRY_SCAN" });
 });
 
 refresh();

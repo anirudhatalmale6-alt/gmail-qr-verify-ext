@@ -1,6 +1,6 @@
-let verifyTabId = null;
 let originTabId = null;
 let qrUrl = "";
+let altUrlResults = [];
 
 function log(msg) {
   console.log("[Gmail QR Verify BG]", msg);
@@ -11,28 +11,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     log(`QR decoded: ${message.url}`);
     qrUrl = message.url;
     originTabId = sender.tab ? sender.tab.id : null;
-
-    openVerifyTab(message.url)
-      .then(() => sendResponse({ success: true }))
-      .catch((e) => {
-        log(`Error: ${e.message}`);
-        sendResponse({ success: false, error: e.message });
-      });
-
-    return true;
+    return;
   }
 
-  if (message.type === "VERIFY_TAB_STATUS") {
-    log(`Verify tab status: ${message.status} - ${message.details}`);
-    handleVerifyStatus(message.status, message.details);
+  if (message.type === "TRY_ALT_URLS") {
+    log(`Trying ${message.urls.length} alternative URLs...`);
+    tryAlternativeUrls(message.urls, sender.tab ? sender.tab.id : null);
+    return;
   }
 
   if (message.type === "GET_STATUS") {
     sendResponse({
       qrUrl,
-      verifyTabId,
       originTabId,
-      status: verifyTabId ? "verifying" : qrUrl ? "decoded" : "idle",
+      altUrlResults,
+      status: qrUrl ? "decoded" : "idle",
     });
     return true;
   }
@@ -42,57 +35,63 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.tabs.sendMessage(originTabId, { type: "MANUAL_SCAN" });
     }
     sendResponse({ ok: true });
+    return;
+  }
+
+  if (message.type === "OPEN_QR_URL") {
+    if (qrUrl) {
+      chrome.tabs.create({ url: qrUrl, active: true });
+    }
+    sendResponse({ ok: true });
+    return;
   }
 });
 
-async function openVerifyTab(url) {
-  const tab = await chrome.tabs.create({
-    url: url,
-    active: true,
-  });
+async function tryAlternativeUrls(urls, tabId) {
+  altUrlResults = [];
 
-  verifyTabId = tab.id;
-
-  log(`Opened verify tab ${tab.id} (desktop mode, no mobile UA) for: ${url}`);
-
-  await chrome.storage.local.set({
-    verifyTabId: tab.id,
-    qrUrl: url,
-    originTabId: originTabId,
-    startTime: Date.now(),
-  });
-}
-
-function handleVerifyStatus(status, details) {
-  if (status === "complete" || status === "success") {
-    log("Verification successful!");
-
-    if (originTabId) {
-      chrome.tabs.sendMessage(originTabId, { type: "VERIFICATION_COMPLETE" });
-      chrome.tabs.update(originTabId, { active: true });
-    }
-
-    setTimeout(async () => {
-      if (verifyTabId) {
-        try {
-          await chrome.tabs.remove(verifyTabId);
-        } catch (e) {}
-      }
-      verifyTabId = null;
-    }, 2000);
-  } else if (status === "failed" || status === "error") {
-    log(`Verification failed: ${details}`);
-    if (originTabId) {
-      chrome.tabs.sendMessage(originTabId, {
-        type: "VERIFICATION_FAILED",
-        details,
+  for (const url of urls) {
+    try {
+      log(`Testing: ${url}`);
+      const response = await fetch(url, {
+        method: "GET",
+        redirect: "follow",
+        credentials: "include",
       });
+
+      const finalUrl = response.url;
+      const status = response.status;
+      const text = await response.text();
+
+      const hasPhoneInput =
+        text.includes('type="tel"') ||
+        text.includes("phone number") ||
+        text.includes("Enter your phone");
+
+      const isRedirectBack =
+        finalUrl.includes("mophoneverification") ||
+        finalUrl.includes("Scan the QR");
+
+      altUrlResults.push({
+        url,
+        finalUrl,
+        status,
+        hasPhoneInput,
+        isRedirectBack,
+      });
+
+      log(`Result: status=${status}, hasPhoneInput=${hasPhoneInput}, redirectBack=${isRedirectBack}, finalUrl=${finalUrl}`);
+
+      if (hasPhoneInput && !isRedirectBack) {
+        log(`Found phone input at: ${finalUrl}`);
+        chrome.tabs.create({ url: finalUrl, active: true });
+        return;
+      }
+    } catch (e) {
+      log(`Error testing ${url}: ${e.message}`);
+      altUrlResults.push({ url, error: e.message });
     }
   }
-}
 
-chrome.tabs.onRemoved.addListener((tabId) => {
-  if (tabId === verifyTabId) {
-    verifyTabId = null;
-  }
-});
+  log("No alternative URL had a phone input form");
+}
