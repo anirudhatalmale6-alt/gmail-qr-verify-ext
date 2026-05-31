@@ -2,6 +2,11 @@
   if (window.__phoneInjectorLoaded) return;
   window.__phoneInjectorLoaded = true;
 
+  // Check if background script already captured SMS URL
+  if (window.__capturedSmsUrl) {
+    setTimeout(() => showSmsOverlay(window.__capturedSmsUrl), 500);
+  }
+
   let pendingSmsUrl = null;
   let overlayShown = false;
 
@@ -304,6 +309,38 @@
     return el;
   };
 
+  // METHOD 11: Register as sms: protocol handler
+  // When Google triggers sms://244444?body=..., Chrome redirects to our handler URL
+  // instead of failing with "no registered handler"
+  try {
+    const baseUrl = window.location.href.split('#')[0].split('?')[0];
+    navigator.registerProtocolHandler('sms', baseUrl + '?sms_handler=%s');
+    log("Registered as sms: protocol handler!");
+  } catch (e) {
+    log("registerProtocolHandler failed: " + e.message);
+  }
+
+  // Check if we ARE the handler page (redirected here with sms_handler param)
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const smsHandler = urlParams.get('sms_handler');
+    if (smsHandler) {
+      log("Protocol handler redirect detected: " + smsHandler);
+      pendingSmsUrl = smsHandler;
+    }
+  } catch (e) {}
+
+  // Listen for hash changes (backup protocol handler method)
+  window.addEventListener('hashchange', () => {
+    const hash = window.location.hash;
+    if (hash.includes('sms:') || hash.includes('sms%3A')) {
+      const decoded = decodeURIComponent(hash.replace('#', ''));
+      log("Hash change contains SMS data: " + decoded);
+      const match = decoded.match(/sms:\/?\/?[^"'\s]+/i);
+      if (match) showSmsOverlay(match[0]);
+    }
+  });
+
   log("Phase 1 complete - all early hooks installed");
 
   // ============================================================
@@ -509,7 +546,7 @@
       padding:8px 16px;background:#1a73e8;color:white;
       font-family:Arial,sans-serif;font-size:12px;text-align:center;
     `;
-    banner.textContent = "SMS Interceptor v2.4 active - click 'Send SMS' and the extension will capture the verification details.";
+    banner.textContent = "SMS Interceptor v2.5 active - click 'Send SMS' and the extension will capture the verification details.";
     document.body.appendChild(banner);
 
     log("Phase 2 complete - all DOM hooks active");
