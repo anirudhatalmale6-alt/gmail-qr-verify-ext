@@ -56,43 +56,59 @@
       border:2px solid #66bb6a;
     `;
 
-    overlay.innerHTML = `
-      <h2 style="color:#66bb6a;margin:0 0 16px;font-size:18px;">SMS Verification Captured!</h2>
-      <p style="font-size:13px;color:#aaa;margin-bottom:16px;">
-        Open your rent phone and send this EXACT SMS:
-      </p>
-      <div style="background:#0d1b2a;border-radius:8px;padding:14px;margin-bottom:12px;">
-        <div style="font-size:11px;color:#888;margin-bottom:4px;">SEND TO THIS NUMBER:</div>
-        <div style="font-size:28px;font-weight:bold;color:#fff;letter-spacing:2px;user-select:all;" id="sms-to-display">${to}</div>
-      </div>
-      <div style="background:#0d1b2a;border-radius:8px;padding:14px;margin-bottom:12px;">
-        <div style="font-size:11px;color:#888;margin-bottom:4px;">MESSAGE (copy exactly):</div>
-        <div style="font-size:14px;font-weight:bold;color:#66bb6a;word-break:break-all;user-select:all;" id="sms-body-display">${body}</div>
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:12px;">
-        <button id="copy-number-btn" style="flex:1;background:#1a73e8;color:#fff;border:none;padding:10px;border-radius:6px;cursor:pointer;font-weight:600;">Copy Number</button>
-        <button id="copy-msg-btn" style="flex:1;background:#2e7d32;color:#fff;border:none;padding:10px;border-radius:6px;cursor:pointer;font-weight:600;">Copy Message</button>
-      </div>
-      <p style="font-size:12px;color:#ffa726;margin-bottom:12px;">
-        After sending the SMS, wait here. This page will auto-detect when verification is complete.
-      </p>
-      <button id="close-sms-overlay" style="background:#333;color:#ccc;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-size:12px;">Close</button>
-    `;
+    // Build overlay using DOM (no innerHTML - Google blocks it with Trusted Types CSP)
+    function el(tag, styles, text) {
+      const e = document.createElement(tag);
+      if (styles) e.style.cssText = styles;
+      if (text) e.textContent = text;
+      return e;
+    }
+
+    const title = el("h2", "color:#66bb6a;margin:0 0 16px;font-size:18px;", "SMS Verification Captured!");
+    overlay.appendChild(title);
+
+    const subtitle = el("p", "font-size:13px;color:#aaa;margin-bottom:16px;", "Open your rent phone and send this EXACT SMS:");
+    overlay.appendChild(subtitle);
+
+    const toBox = el("div", "background:#0d1b2a;border-radius:8px;padding:14px;margin-bottom:12px;");
+    toBox.appendChild(el("div", "font-size:11px;color:#888;margin-bottom:4px;", "SEND TO THIS NUMBER:"));
+    const toDisplay = el("div", "font-size:28px;font-weight:bold;color:#fff;letter-spacing:2px;user-select:all;", to);
+    toBox.appendChild(toDisplay);
+    overlay.appendChild(toBox);
+
+    const msgBox = el("div", "background:#0d1b2a;border-radius:8px;padding:14px;margin-bottom:12px;");
+    msgBox.appendChild(el("div", "font-size:11px;color:#888;margin-bottom:4px;", "MESSAGE (copy exactly):"));
+    const msgDisplay = el("div", "font-size:14px;font-weight:bold;color:#66bb6a;word-break:break-all;user-select:all;", body);
+    msgBox.appendChild(msgDisplay);
+    overlay.appendChild(msgBox);
+
+    const btnRow = el("div", "display:flex;gap:8px;margin-bottom:12px;");
+    const copyNumBtn = el("button", "flex:1;background:#1a73e8;color:#fff;border:none;padding:10px;border-radius:6px;cursor:pointer;font-weight:600;", "Copy Number");
+    const copyMsgBtn = el("button", "flex:1;background:#2e7d32;color:#fff;border:none;padding:10px;border-radius:6px;cursor:pointer;font-weight:600;", "Copy Message");
+    btnRow.appendChild(copyNumBtn);
+    btnRow.appendChild(copyMsgBtn);
+    overlay.appendChild(btnRow);
+
+    const warning = el("p", "font-size:12px;color:#ffa726;margin-bottom:12px;", "After sending the SMS, wait here. This page will auto-detect when verification is complete.");
+    overlay.appendChild(warning);
+
+    const closeBtn = el("button", "background:#333;color:#ccc;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-size:12px;", "Close");
+    overlay.appendChild(closeBtn);
 
     document.body.appendChild(backdrop);
     document.body.appendChild(overlay);
 
-    document.getElementById("copy-number-btn").onclick = () => {
+    copyNumBtn.onclick = () => {
       navigator.clipboard.writeText(to);
-      document.getElementById("copy-number-btn").textContent = "Copied!";
-      setTimeout(() => (document.getElementById("copy-number-btn").textContent = "Copy Number"), 2000);
+      copyNumBtn.textContent = "Copied!";
+      setTimeout(() => (copyNumBtn.textContent = "Copy Number"), 2000);
     };
-    document.getElementById("copy-msg-btn").onclick = () => {
+    copyMsgBtn.onclick = () => {
       navigator.clipboard.writeText(body);
-      document.getElementById("copy-msg-btn").textContent = "Copied!";
-      setTimeout(() => (document.getElementById("copy-msg-btn").textContent = "Copy Message"), 2000);
+      copyMsgBtn.textContent = "Copied!";
+      setTimeout(() => (copyMsgBtn.textContent = "Copy Message"), 2000);
     };
-    document.getElementById("close-sms-overlay").onclick = () => {
+    closeBtn.onclick = () => {
       overlay.remove();
       backdrop.remove();
       overlayShown = false;
@@ -546,7 +562,7 @@
       padding:8px 16px;background:#1a73e8;color:white;
       font-family:Arial,sans-serif;font-size:12px;text-align:center;
     `;
-    banner.textContent = "SMS Interceptor v2.5 active - click 'Send SMS' and the extension will capture the verification details.";
+    banner.textContent = "SMS Interceptor v2.6 active - click 'Send SMS' and the extension will capture the verification details.";
     document.body.appendChild(banner);
 
     log("Phase 2 complete - all DOM hooks active");
