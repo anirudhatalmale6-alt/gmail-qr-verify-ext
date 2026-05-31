@@ -1,6 +1,7 @@
 let qrUrl = "";
 let scanStatus = "idle";
 let scanError = "";
+let smsData = null;
 
 function log(msg) {
   console.log("[Gmail QR Verify BG]", msg);
@@ -31,11 +32,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message.type === "SMS_CAPTURED") {
+    log(`SMS captured! To: ${message.to}, Body: ${message.body}`);
+    smsData = {
+      to: message.to,
+      body: message.body,
+      rawUrl: message.rawUrl,
+    };
+    return;
+  }
+
   if (message.type === "GET_STATUS") {
     sendResponse({
       qrUrl,
       scanStatus,
       scanError,
+      smsData,
     });
     return true;
   }
@@ -63,6 +75,6 @@ async function injectScanner(tabId) {
   } catch (e) {
     log(`Injection error: ${e.message}`);
     scanStatus = "error";
-    scanError = `Could not inject scanner: ${e.message}. Make sure you're on a Google accounts page.`;
+    scanError = `Could not inject scanner: ${e.message}`;
   }
 }
