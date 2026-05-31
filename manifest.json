@@ -1,0 +1,62 @@
+{
+  "manifest_version": 3,
+  "name": "Gmail QR Auto-Verify",
+  "version": "1.0.0",
+  "description": "Automatically handles Google QR verification during account creation",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "declarativeNetRequest",
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://accounts.google.com/*",
+    "https://*.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://accounts.google.com/lifecycle/steps/signup/*",
+        "https://accounts.google.com/v3/signin/*",
+        "https://accounts.google.com/lifecycle/*"
+      ],
+      "js": ["jsqr.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://accounts.google.com/*"
+      ],
+      "js": ["mobile-verify.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "mobile_ua_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
