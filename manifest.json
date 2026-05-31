@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Gmail QR Auto-Verify",
-  "version": "2.0.0",
+  "version": "2.4.0",
   "description": "Scan and decode Google QR verification codes",
   "permissions": [
     "activeTab",
@@ -16,6 +16,17 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://accounts.google.com/devicephoneverification/*",
+        "https://accounts.google.com/lifecycle/steps/signup/mophoneverification/*"
+      ],
+      "js": ["inject-phone.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
