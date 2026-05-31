@@ -37,17 +37,16 @@
       max-height: 50px; overflow-y: auto; cursor: pointer;
       border: 1px solid transparent;
     }
-    .url-box:hover { border-color: #4fc3f7; }
     .btn {
       display: block; width: 100%; padding: 10px; border: none; border-radius: 6px;
       font-size: 13px; font-weight: 600; cursor: pointer; margin-bottom: 6px;
     }
     .btn:hover { opacity: 0.85; }
-    .btn:active { transform: scale(0.98); }
     .btn-scan { background: #1a73e8; color: white; }
     .btn-inject { background: #2e7d32; color: white; }
-    .btn-open { background: #f57c00; color: white; }
+    .btn-flow { background: #f57c00; color: white; }
     .btn-secondary { background: #333; color: #ccc; }
+    .btn-small { padding: 7px; font-size: 11px; }
     .phone-input {
       width: 100%; padding: 10px; border: 2px solid #333; border-radius: 6px;
       background: #0d1b2a; color: #fff; font-size: 14px;
@@ -66,12 +65,11 @@
     .dot-decoded { background: #66bb6a; }
     .dot-error { background: #ef5350; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-    .info {
-      font-size: 10px; color: #555; text-align: center;
-      margin-top: 8px; line-height: 1.4;
-    }
-    .divider { border-top: 1px solid #333; margin: 12px 0; }
+    .info { font-size: 10px; color: #555; text-align: center; margin-top: 8px; line-height: 1.4; }
+    .divider { border-top: 1px solid #333; margin: 10px 0; }
     .hidden { display: none; }
+    .flow-btns { display: flex; gap: 4px; margin-top: 6px; }
+    .flow-btns .btn { flex: 1; padding: 7px; font-size: 11px; }
     .sms-card {
       background: #1b3a1b; border-radius: 8px; padding: 12px; margin-bottom: 10px;
       border: 1px solid #2e7d32;
@@ -82,16 +80,16 @@
 <body>
   <div class="header">
     <h1>Gmail QR Auto-Verify</h1>
-    <p>v2.1 - Scan QR + Phone Inject</p>
+    <p>v2.2 - Scan + Phone + Flow Switch</p>
   </div>
 
   <!-- Step 1: Scan QR -->
   <div class="card">
     <div class="card-label">Step 1: Scan QR Code</div>
     <button class="btn btn-scan" id="scanBtn">Scan QR Code</button>
-    <div class="status-text" id="scanStatus">
+    <div class="status-text" id="scanStatus" style="margin-top:6px">
       <span class="dot dot-idle" id="scanDot"></span>
-      <span id="scanMsg">Click to scan QR code on current page</span>
+      <span id="scanMsg">Click to scan QR on current page</span>
     </div>
   </div>
 
@@ -100,45 +98,56 @@
       <div class="card-label">QR URL (click to copy)</div>
       <div class="url-box" id="urlBox"></div>
     </div>
-    <button class="btn btn-open" id="openBtn">Open QR URL in New Tab</button>
+    <button class="btn btn-secondary" id="openBtn">Open QR URL in New Tab</button>
   </div>
 
   <div class="divider"></div>
 
-  <!-- Step 2: Phone Number Injection -->
+  <!-- Step 2: Switch Flow -->
   <div class="card">
-    <div class="card-label">Step 2: Phone Verification</div>
-    <p style="font-size: 11px; color: #aaa; margin-bottom: 8px;">
-      On the "Verify your phone number" or "This may take a few moments" page,
-      enter your rent phone number and click inject.
+    <div class="card-label">Step 2: Switch Verification Flow</div>
+    <p style="font-size: 11px; color: #aaa; margin-bottom: 6px;">
+      On the "This may take a few moments" page, try switching to a different verification flow
+      that shows a phone number input:
     </p>
+    <button class="btn btn-flow" id="switchFlowBtn">Try Alternative Flow (pnv_flow=1)</button>
+    <div class="flow-btns">
+      <button class="btn btn-secondary" id="flow0">Flow 0</button>
+      <button class="btn btn-secondary" id="flow3">Flow 3</button>
+      <button class="btn btn-secondary" id="flow4">Flow 4</button>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Step 3: Diagnostics -->
+  <div class="card">
+    <div class="card-label">Step 3: Diagnostics + Phone Inject</div>
     <input type="tel" class="phone-input" id="phoneInput"
            placeholder="+1234567890" autocomplete="tel">
-    <button class="btn btn-inject" id="injectBtn">Inject Phone Number + Monitor</button>
-    <button class="btn btn-secondary" id="diagBtn">Run Diagnostics Only</button>
+    <button class="btn btn-inject" id="injectBtn">Inject + Monitor (check F12 console)</button>
     <div class="error-text hidden" id="injectError"></div>
   </div>
 
-  <!-- SMS Capture Results -->
+  <!-- SMS Results -->
   <div class="hidden" id="smsResult">
     <div class="sms-card">
-      <div class="card-label">SMS Verification Captured!</div>
-      <p style="font-size: 11px; color: #aaa; margin-bottom: 8px;">Send this SMS from your rent phone:</p>
-      <div style="margin-bottom: 8px;">
-        <div style="font-size: 10px; color: #888;">SEND TO:</div>
-        <div class="sms-value" id="smsTo"></div>
+      <div class="card-label">SMS Captured!</div>
+      <p style="font-size: 11px; color: #aaa; margin-bottom: 6px;">Send from your phone:</p>
+      <div style="margin-bottom: 6px;">
+        <span style="font-size: 10px; color: #888;">TO: </span>
+        <span class="sms-value" id="smsTo"></span>
       </div>
       <div>
-        <div style="font-size: 10px; color: #888;">MESSAGE:</div>
-        <div class="sms-value" id="smsBody"></div>
+        <span style="font-size: 10px; color: #888;">MSG: </span>
+        <span class="sms-value" id="smsBody"></span>
       </div>
     </div>
   </div>
 
   <div class="info">
-    Step 1: Use on the QR code page to decode the URL.<br>
-    Step 2: Use on the phone verification page to inject your number and capture SMS details.
-    Check browser console (F12) for detailed logs.
+    The key is Step 2: Google uses pnv_flow=2 (device auto-detect) which has no phone input.
+    Switching to flow 1 or 3 may show a manual phone entry form instead.
   </div>
 
   <script src="popup.js"></script>

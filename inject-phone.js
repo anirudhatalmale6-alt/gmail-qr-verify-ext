@@ -10,301 +10,243 @@
 
   log("Phone injector loaded. Number: " + PHONE_NUMBER);
   log("Page URL: " + window.location.href);
-  log("Current page text: " + (document.body ? document.body.innerText.substring(0, 300) : "no body"));
 
-  // Intercept SMS URL schemes (sms:, intent:)
+  // ============================================
+  // 1. Try switching verification flow via URL
+  // ============================================
+  function tryFlowSwitch() {
+    const url = new URL(window.location.href);
+    const currentFlow = url.searchParams.get("pnv_flow");
+    log("Current pnv_flow: " + currentFlow);
+
+    if (currentFlow === "2") {
+      // Flow 2 = device-based (auto SIM detect) - try switching to flow 1 or 3
+      const altFlows = ["1", "3", "0"];
+      log("Device flow detected. Will try alternative flows: " + altFlows.join(", "));
+
+      chrome.runtime.sendMessage({
+        type: "FLOW_OPTIONS",
+        currentFlow: currentFlow,
+        altFlows: altFlows,
+        baseUrl: window.location.href,
+      });
+    }
+  }
+
+  // ============================================
+  // 2. Intercept SMS URL schemes
+  // ============================================
   const origOpen = window.open;
   window.open = function (url, ...args) {
     if (url && typeof url === "string") {
-      log("window.open intercepted: " + url);
+      log("window.open: " + url);
       if (url.startsWith("sms:") || url.startsWith("intent:")) {
-        log("SMS INTENT CAPTURED: " + url);
-        showSmsInfo(url);
+        log("SMS CAPTURED: " + url);
+        showSmsOverlay(url);
         return null;
       }
     }
     return origOpen.call(this, url, ...args);
   };
 
-  // Intercept location changes for sms: scheme
-  const origAssign = Object.getOwnPropertyDescriptor(Location.prototype, "href");
-  if (origAssign && origAssign.set) {
-    Object.defineProperty(window.location, "href", {
-      set: function (val) {
-        if (val && typeof val === "string" && (val.startsWith("sms:") || val.startsWith("intent:"))) {
-          log("location.href SMS intercepted: " + val);
-          showSmsInfo(val);
-          return;
-        }
-        origAssign.set.call(this, val);
-      },
-      get: origAssign.get ? origAssign.get.bind(window.location) : undefined,
-    });
-  }
-
-  // Intercept link clicks for sms: scheme
-  document.addEventListener(
-    "click",
-    function (e) {
-      const link = e.target.closest("a");
-      if (link) {
-        const href = link.getAttribute("href") || "";
-        if (href.startsWith("sms:") || href.startsWith("intent:")) {
-          e.preventDefault();
-          e.stopPropagation();
-          log("Link click SMS intercepted: " + href);
-          showSmsInfo(href);
-        }
+  document.addEventListener("click", function (e) {
+    const link = e.target.closest("a");
+    if (link) {
+      const href = link.getAttribute("href") || "";
+      if (href.startsWith("sms:") || href.startsWith("intent:")) {
+        e.preventDefault();
+        e.stopPropagation();
+        log("SMS link captured: " + href);
+        showSmsOverlay(href);
       }
-    },
-    true
-  );
+    }
+  }, true);
 
-  // Override navigator.credentials to provide phone number hint
-  if (navigator.credentials) {
-    const origGet = navigator.credentials.get.bind(navigator.credentials);
-    navigator.credentials.get = async function (options) {
-      log("navigator.credentials.get called with: " + JSON.stringify(options));
-
-      if (options && options.otp) {
-        log("OTP credential requested - monitoring for auto-fill");
-      }
-
-      try {
-        return await origGet(options);
-      } catch (e) {
-        log("credentials.get error (expected): " + e.message);
-        return null;
-      }
-    };
-  }
-
-  // Monitor all fetch/XHR for verification-related calls
+  // ============================================
+  // 3. Monitor ALL network requests
+  // ============================================
   const origFetch = window.fetch;
   window.fetch = async function (url, options) {
-    const urlStr = typeof url === "string" ? url : url.url || "";
+    const urlStr = typeof url === "string" ? url : (url && url.url) || "";
+    log("FETCH: " + urlStr.substring(0, 200));
 
-    if (
-      urlStr.includes("verify") ||
-      urlStr.includes("phone") ||
-      urlStr.includes("sms") ||
-      urlStr.includes("challenge") ||
-      urlStr.includes("mophoneverification")
-    ) {
-      log("FETCH intercepted: " + urlStr);
-      if (options && options.body) {
-        log("Body: " + (typeof options.body === "string" ? options.body.substring(0, 500) : "non-string body"));
-      }
+    if (options && options.body) {
+      const bodyStr = typeof options.body === "string" ? options.body : "";
+      if (bodyStr) log("FETCH body: " + bodyStr.substring(0, 500));
     }
 
     const response = await origFetch.call(this, url, options);
-
-    if (
-      urlStr.includes("verify") ||
-      urlStr.includes("phone") ||
-      urlStr.includes("sms") ||
-      urlStr.includes("challenge")
-    ) {
-      const clone = response.clone();
-      clone.text().then((text) => {
-        log("FETCH response from " + urlStr + ": " + text.substring(0, 500));
-      }).catch(() => {});
-    }
+    const clone = response.clone();
+    clone.text().then((text) => {
+      if (text.length < 5000) {
+        log("FETCH response: " + text.substring(0, 1000));
+      } else {
+        log("FETCH response (large, " + text.length + " chars): " + text.substring(0, 500));
+      }
+    }).catch(() => {});
 
     return response;
   };
 
-  // Monitor XHR
   const origXhrOpen = XMLHttpRequest.prototype.open;
   const origXhrSend = XMLHttpRequest.prototype.send;
-
   XMLHttpRequest.prototype.open = function (method, url, ...args) {
     this.__url = url;
-    if (
-      url.includes("verify") ||
-      url.includes("phone") ||
-      url.includes("sms") ||
-      url.includes("challenge")
-    ) {
-      log("XHR intercepted: " + method + " " + url);
-    }
+    this.__method = method;
+    log("XHR " + method + ": " + url);
     return origXhrOpen.call(this, method, url, ...args);
   };
-
   XMLHttpRequest.prototype.send = function (body) {
-    if (this.__url && (
-      this.__url.includes("verify") ||
-      this.__url.includes("phone") ||
-      this.__url.includes("sms")
-    )) {
-      log("XHR send to " + this.__url + ": " + (body ? String(body).substring(0, 300) : "no body"));
-
-      this.addEventListener("load", () => {
-        log("XHR response from " + this.__url + ": " + this.responseText.substring(0, 500));
-      });
-    }
+    if (body) log("XHR body to " + this.__url + ": " + String(body).substring(0, 500));
+    this.addEventListener("load", () => {
+      log("XHR response from " + this.__url + ": " + this.responseText.substring(0, 1000));
+    });
     return origXhrSend.call(this, body);
   };
 
-  // Look for and inject into phone number fields
-  function injectPhoneNumber() {
+  // ============================================
+  // 4. Find phone inputs and inject number
+  // ============================================
+  function findAndFillPhoneInputs() {
     if (!PHONE_NUMBER) return;
 
-    // Look for phone-related inputs
-    const inputs = document.querySelectorAll(
-      'input[type="tel"], input[name*="phone"], input[id*="phone"], input[autocomplete*="tel"]'
-    );
+    const selectors = [
+      'input[type="tel"]',
+      'input[name*="phone"]',
+      'input[id*="phone"]',
+      'input[autocomplete*="tel"]',
+      'input[aria-label*="phone"]',
+      'input[placeholder*="phone"]',
+      'input[placeholder*="number"]',
+    ];
 
-    inputs.forEach((inp) => {
-      log("Found phone input: " + inp.name + " / " + inp.id);
-      inp.value = PHONE_NUMBER;
-      inp.dispatchEvent(new Event("input", { bubbles: true }));
-      inp.dispatchEvent(new Event("change", { bubbles: true }));
+    let found = 0;
+    selectors.forEach((sel) => {
+      document.querySelectorAll(sel).forEach((inp) => {
+        log("Filling phone input: " + (inp.name || inp.id || inp.type));
+        inp.value = PHONE_NUMBER;
+        inp.dispatchEvent(new Event("input", { bubbles: true }));
+        inp.dispatchEvent(new Event("change", { bubbles: true }));
+        inp.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
+        found++;
+      });
     });
 
-    // Look for hidden phone fields in JavaScript variables
-    const scripts = document.querySelectorAll("script");
-    scripts.forEach((script) => {
-      const text = script.textContent || "";
-      if (text.includes("phoneNumber") || text.includes("phone_number") || text.includes("msisdn")) {
-        log("Found phone-related script content (length: " + text.length + ")");
-      }
-    });
+    return found;
   }
 
-  function parseSmsUrl(url) {
+  // ============================================
+  // 5. Scan page for any useful info
+  // ============================================
+  function scanPage() {
+    const text = document.body ? document.body.innerText : "";
+    log("Page text: " + text.substring(0, 500));
+
+    // Look for any forms
+    const forms = document.querySelectorAll("form");
+    forms.forEach((form, i) => {
+      log("Form " + i + " action: " + (form.action || "none") + " method: " + (form.method || "none"));
+      form.querySelectorAll("input").forEach((inp) => {
+        log("  Input: name=" + inp.name + " type=" + inp.type + " value=" + inp.value);
+      });
+    });
+
+    // Look for hidden inputs
+    document.querySelectorAll('input[type="hidden"]').forEach((inp) => {
+      log("Hidden input: name=" + inp.name + " value=" + inp.value.substring(0, 100));
+    });
+
+    // Look for data in script tags
+    document.querySelectorAll("script").forEach((script) => {
+      const content = script.textContent || "";
+      if (content.includes("phone") || content.includes("sms") || content.includes("verify") || content.includes("token")) {
+        const relevant = content.substring(0, 2000);
+        log("Script with verification data: " + relevant.substring(0, 500));
+      }
+    });
+
+    // Count phone inputs found
+    const filled = findAndFillPhoneInputs();
+    if (filled > 0) {
+      log("Filled " + filled + " phone inputs with " + PHONE_NUMBER);
+    }
+  }
+
+  function showSmsOverlay(smsUrl) {
     let to = "";
     let body = "";
 
-    if (url.startsWith("sms:")) {
-      const parts = url.substring(4).split("?");
+    if (smsUrl.startsWith("sms:")) {
+      const parts = smsUrl.substring(4).split("?");
       to = parts[0];
       if (parts[1]) {
         const params = new URLSearchParams(parts[1]);
         body = params.get("body") || "";
       }
-    } else if (url.startsWith("intent:")) {
-      const match = url.match(/intent:\/\/.*?sms.*?;.*?S\.sms_body=([^;]+)/i);
-      if (match) body = decodeURIComponent(match[1]);
-      const toMatch = url.match(/intent:\/\/([\d+]+)/);
-      if (toMatch) to = toMatch[1];
     }
-
-    return { to, body };
-  }
-
-  function showSmsInfo(smsUrl) {
-    const { to, body } = parseSmsUrl(smsUrl);
 
     const overlay = document.createElement("div");
     overlay.style.cssText = `
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
       z-index: 999999; background: #1a1a2e; color: #e0e0e0;
-      border-radius: 12px; padding: 24px; max-width: 400px; width: 90%;
+      border-radius: 12px; padding: 24px; max-width: 420px; width: 90%;
       box-shadow: 0 10px 40px rgba(0,0,0,0.5); font-family: Arial, sans-serif;
-      border: 2px solid #4fc3f7;
+      border: 2px solid #66bb6a;
     `;
-
     overlay.innerHTML = `
-      <h2 style="color: #4fc3f7; margin: 0 0 12px; font-size: 16px;">SMS Verification Captured!</h2>
-      <p style="font-size: 13px; color: #aaa; margin-bottom: 16px;">
-        Send this SMS from your phone to complete verification:
-      </p>
-      <div style="background: #0d1b2a; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
-        <div style="font-size: 11px; color: #888; margin-bottom: 4px;">SEND TO:</div>
-        <div style="font-size: 18px; font-weight: bold; color: #fff; letter-spacing: 1px;" id="sms-to">${to || "See raw URL below"}</div>
+      <h2 style="color: #66bb6a; margin: 0 0 12px; font-size: 16px;">SMS Verification Info</h2>
+      <p style="font-size: 12px; color: #aaa; margin-bottom: 14px;">Send this SMS from your rent phone:</p>
+      <div style="background: #0d1b2a; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+        <div style="font-size: 10px; color: #888;">SEND TO:</div>
+        <div style="font-size: 20px; font-weight: bold; color: #fff; margin-top: 4px;">${to || smsUrl}</div>
       </div>
-      <div style="background: #0d1b2a; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
-        <div style="font-size: 11px; color: #888; margin-bottom: 4px;">MESSAGE:</div>
-        <div style="font-size: 16px; font-weight: bold; color: #66bb6a;" id="sms-body">${body || "See raw URL below"}</div>
+      <div style="background: #0d1b2a; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+        <div style="font-size: 10px; color: #888;">MESSAGE:</div>
+        <div style="font-size: 18px; font-weight: bold; color: #66bb6a; margin-top: 4px;">${body || "(empty - just send to the number)"}</div>
       </div>
-      <div style="background: #0d1b2a; border-radius: 8px; padding: 8px; margin-bottom: 16px;">
-        <div style="font-size: 11px; color: #888; margin-bottom: 4px;">RAW URL:</div>
-        <div style="font-size: 10px; color: #78909c; word-break: break-all;">${smsUrl}</div>
+      <div style="background: #0d1b2a; border-radius: 8px; padding: 8px; margin-bottom: 14px;">
+        <div style="font-size: 10px; color: #888;">RAW:</div>
+        <div style="font-size: 9px; color: #78909c; word-break: break-all;">${smsUrl}</div>
       </div>
-      <p style="font-size: 12px; color: #ffa726; margin-bottom: 12px;">
-        Send this SMS from your rent phone number, then wait for this page to verify.
-      </p>
-      <button id="dismiss-sms-overlay" style="
-        background: #333; color: #ccc; border: none; padding: 8px 20px;
+      <button onclick="this.parentElement.remove();document.getElementById('sms-backdrop')?.remove()" style="
+        background: #333; color: #ccc; border: none; padding: 8px 24px;
         border-radius: 6px; cursor: pointer; font-size: 12px;
-      ">Got it</button>
+      ">Close</button>
     `;
-
-    document.body.appendChild(overlay);
 
     const backdrop = document.createElement("div");
-    backdrop.style.cssText = `
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.7); z-index: 999998;
-    `;
+    backdrop.id = "sms-backdrop";
+    backdrop.style.cssText = `position: fixed; top:0;left:0;right:0;bottom:0; background:rgba(0,0,0,0.7); z-index:999998;`;
+
     document.body.appendChild(backdrop);
+    document.body.appendChild(overlay);
 
-    document.getElementById("dismiss-sms-overlay").onclick = () => {
-      overlay.remove();
-      backdrop.remove();
-    };
-
-    // Also send to extension
-    chrome.runtime.sendMessage({
-      type: "SMS_CAPTURED",
-      to,
-      body,
-      rawUrl: smsUrl,
-    });
+    chrome.runtime.sendMessage({ type: "SMS_CAPTURED", to, body, rawUrl: smsUrl });
   }
 
-  // Look for the page's verification data in the DOM
-  function scanPageForVerificationData() {
-    const bodyText = document.body ? document.body.innerText : "";
-
-    // Look for phone numbers already on the page
-    const phoneRegex = /[\+]?[\d\s\-\(\)]{10,}/g;
-    const matches = bodyText.match(phoneRegex);
-    if (matches) {
-      log("Phone numbers found on page: " + JSON.stringify(matches));
-    }
-
-    // Look for data attributes with verification info
-    document.querySelectorAll("[data-phone], [data-number], [data-sms], [data-verification]").forEach((el) => {
-      log("Data attribute element: " + el.outerHTML.substring(0, 200));
-    });
-
-    // Look for the "Try Again" button and monitor what it does
-    const buttons = document.querySelectorAll("button, [role='button'], a");
-    buttons.forEach((btn) => {
-      const text = (btn.innerText || btn.textContent || "").toLowerCase().trim();
-      if (text.includes("try again") || text.includes("send sms") || text.includes("retry")) {
-        log("Found action button: " + text);
-      }
-    });
-  }
-
-  // Run phone injection and scan
+  // Run everything
   setTimeout(() => {
-    injectPhoneNumber();
-    scanPageForVerificationData();
-  }, 1000);
+    scanPage();
+    tryFlowSwitch();
+  }, 500);
 
   // Monitor DOM changes
   const observer = new MutationObserver(() => {
-    scanPageForVerificationData();
-    injectPhoneNumber();
+    findAndFillPhoneInputs();
   });
-
   if (document.body) {
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
-  // Show info banner
+  // Banner
   const banner = document.createElement("div");
   banner.style.cssText = `
     position: fixed; top: 0; left: 0; right: 0; z-index: 999999;
-    padding: 8px 16px; background: #1a73e8; color: white;
+    padding: 8px 16px; background: rgb(26, 115, 232); color: white;
     font-family: Arial, sans-serif; font-size: 12px; text-align: center;
   `;
   banner.textContent = PHONE_NUMBER
     ? "Phone injector active - number: " + PHONE_NUMBER + " - monitoring for SMS intent..."
-    : "Phone injector active (diagnostic mode) - monitoring network requests and SMS intents. Check console (F12) for details.";
+    : "Diagnostics mode - all network requests logged to console (F12)";
   document.body.appendChild(banner);
 })();
