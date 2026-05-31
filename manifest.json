@@ -1,12 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Gmail QR Auto-Verify",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Automatically handles Google QR verification during account creation",
   "permissions": [
     "activeTab",
     "scripting",
-    "declarativeNetRequest",
     "tabs",
     "storage"
   ],
@@ -44,15 +43,6 @@
       "48": "icon48.png",
       "128": "icon128.png"
     }
-  },
-  "declarative_net_request": {
-    "rule_resources": [
-      {
-        "id": "mobile_ua_rules",
-        "enabled": true,
-        "path": "rules.json"
-      }
-    ]
   },
   "icons": {
     "16": "icon16.png",

@@ -2,12 +2,10 @@
   if (window.__gmailQrVerifyLoaded) return;
   window.__gmailQrVerifyLoaded = true;
 
-  const MOBILE_UA =
-    "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.71 Mobile Safari/537.36";
-
   let scanning = false;
   let lastDecodedUrl = "";
   let scanInterval = null;
+  let triedAlternatives = false;
 
   function log(msg) {
     console.log("[Gmail QR Verify]", msg);
@@ -23,6 +21,67 @@
       text.includes("Scan the QR code") ||
       text.includes("Verify some info before creating")
     );
+  }
+
+  function tryAlternativeVerification() {
+    if (triedAlternatives) return false;
+    triedAlternatives = true;
+
+    log("Looking for alternative verification methods...");
+
+    const allLinks = document.querySelectorAll(
+      'a, button, [role="link"], [role="button"], [jsname], [data-action]'
+    );
+
+    const altKeywords = [
+      "try another way",
+      "try a different way",
+      "more options",
+      "other options",
+      "use phone",
+      "phone number",
+      "enter phone",
+      "skip",
+      "i don't have",
+      "can't scan",
+      "another method",
+      "different method",
+      "verify another way",
+      "use another method",
+    ];
+
+    for (const el of allLinks) {
+      const text = (el.innerText || el.textContent || "").toLowerCase().trim();
+      const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
+      const combined = text + " " + ariaLabel;
+
+      for (const kw of altKeywords) {
+        if (combined.includes(kw)) {
+          log(`Found alternative: "${text}" - clicking it`);
+          showBanner(`Found "${text}" option - clicking...`, "working");
+          el.click();
+          return true;
+        }
+      }
+    }
+
+    const smallLinks = document.querySelectorAll(
+      'a[href], span[tabindex], div[tabindex], [class*="link"], [class*="secondary"]'
+    );
+    for (const el of smallLinks) {
+      const text = (el.innerText || el.textContent || "").toLowerCase().trim();
+      if (text.length > 3 && text.length < 50) {
+        const style = window.getComputedStyle(el);
+        if (style.color.includes("66") || style.color.includes("138") ||
+            style.textDecoration.includes("underline") ||
+            el.tagName === "A") {
+          log(`Potential link found: "${text}"`);
+        }
+      }
+    }
+
+    log("No alternative verification methods found on page");
+    return false;
   }
 
   function findQrCodeElements() {
@@ -98,9 +157,10 @@
         canvas.width = size * 2;
         canvas.height = size * 2;
 
-        const svgData = new XMLSerializer().serializeToString(
-          element.type === "svg" ? el : el.querySelector("svg") || el
-        );
+        const svgEl = element.type === "svg" ? el : el.querySelector("svg");
+        if (!svgEl) { resolve(null); return; }
+
+        const svgData = new XMLSerializer().serializeToString(svgEl);
         const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
         const url = URL.createObjectURL(svgBlob);
         const img = new Image();
@@ -156,83 +216,27 @@
     }
   }
 
-  async function scanFullPage() {
-    if (scanning) return;
-    scanning = true;
-
-    try {
-      log("Trying full-page screenshot scan...");
-      const body = document.body;
-      const rect = body.getBoundingClientRect();
-
-      const qrRegions = [];
-      const allImages = document.querySelectorAll("img, canvas, svg");
-      allImages.forEach((el) => {
-        const r = el.getBoundingClientRect();
-        if (r.width >= 80 && r.height >= 80) {
-          qrRegions.push(el);
-        }
-      });
-
-      for (const el of qrRegions) {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        const r = el.getBoundingClientRect();
-        const scale = 2;
-        canvas.width = r.width * scale;
-        canvas.height = r.height * scale;
-
-        try {
-          if (el.tagName === "IMG") {
-            ctx.drawImage(el, 0, 0, canvas.width, canvas.height);
-          } else if (el.tagName === "CANVAS") {
-            ctx.drawImage(el, 0, 0, canvas.width, canvas.height);
-          } else {
-            continue;
-          }
-
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: "attemptBoth",
-          });
-
-          if (code && code.data) {
-            log(`Full-page scan decoded QR: ${code.data}`);
-            if (code.data !== lastDecodedUrl) {
-              lastDecodedUrl = code.data;
-              handleDecodedUrl(code.data);
-            }
-            return;
-          }
-        } catch (e) {}
-      }
-
-      log("Full-page scan: no QR found");
-    } finally {
-      scanning = false;
-    }
-  }
-
   function handleDecodedUrl(url) {
     log(`QR URL decoded: ${url}`);
-
-    showBanner(`QR Code detected! Attempting auto-verification...`, "working");
+    showBanner(`QR Code detected! Opening verification page...`, "working");
 
     chrome.runtime.sendMessage(
       {
         type: "QR_DECODED",
         url: url,
         pageUrl: window.location.href,
-        mobileUA: MOBILE_UA,
       },
       (response) => {
         if (response && response.success) {
-          log("Background opened mobile verification tab");
-          showBanner("Verification in progress... Please wait.", "working");
+          log("Background opened verification tab");
+          showBanner(
+            "Verification tab opened! Check the new tab - enter your phone number there if asked.",
+            "working"
+          );
           pollForCompletion();
         } else {
           log("Failed to open verification tab");
-          showBanner("Auto-verify failed. URL: " + url, "error");
+          showBanner("Could not open verification tab. URL: " + url, "error");
         }
       }
     );
@@ -240,7 +244,7 @@
 
   function pollForCompletion() {
     let checks = 0;
-    const maxChecks = 60;
+    const maxChecks = 120;
 
     const poll = setInterval(() => {
       checks++;
@@ -263,7 +267,7 @@
 
       if (checks >= maxChecks) {
         clearInterval(poll);
-        showBanner("Verification timed out. Try scanning QR manually.", "error");
+        showBanner("Still waiting for verification. Complete it in the other tab.", "working");
       }
     }, 2000);
   }
@@ -272,12 +276,7 @@
     const buttons = document.querySelectorAll("button, [role='button']");
     for (const btn of buttons) {
       const text = (btn.innerText || btn.textContent || "").toLowerCase();
-      if (
-        text.includes("continue") ||
-        text.includes("next") ||
-        text.includes("proceed") ||
-        text.includes("verify")
-      ) {
+      if (text.includes("continue") || text.includes("next") || text.includes("proceed")) {
         return btn;
       }
     }
@@ -310,7 +309,7 @@
     banner.textContent = message;
 
     if (status === "success") {
-      setTimeout(() => banner.remove(), 5000);
+      setTimeout(() => banner.remove(), 8000);
     }
   }
 
@@ -320,9 +319,15 @@
       return;
     }
 
-    log("QR verification page detected! Starting scan...");
-    showBanner("QR verification detected - scanning QR code...", "working");
+    log("QR verification page detected!");
+    showBanner("QR verification detected - looking for alternatives...", "working");
 
+    if (tryAlternativeVerification()) {
+      log("Clicked alternative verification option, waiting for page change...");
+      return;
+    }
+
+    showBanner("No alternative found - scanning QR code...", "working");
     scanForQrCode();
 
     scanInterval = setInterval(() => {
@@ -333,18 +338,12 @@
       if (lastDecodedUrl) return;
       scanForQrCode();
     }, 2000);
-
-    setTimeout(() => {
-      if (!lastDecodedUrl) {
-        scanFullPage();
-      }
-    }, 4000);
   }
 
   if (document.readyState === "complete" || document.readyState === "interactive") {
-    setTimeout(startScanning, 500);
+    setTimeout(startScanning, 1000);
   } else {
-    document.addEventListener("DOMContentLoaded", () => setTimeout(startScanning, 500));
+    document.addEventListener("DOMContentLoaded", () => setTimeout(startScanning, 1000));
   }
 
   const observer = new MutationObserver(() => {
@@ -352,18 +351,18 @@
       startScanning();
     }
   });
-  observer.observe(document.body || document.documentElement, {
-    childList: true,
-    subtree: true,
-  });
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "VERIFICATION_COMPLETE") {
       showBanner("Verification complete!", "success");
     } else if (msg.type === "VERIFICATION_FAILED") {
-      showBanner("Auto-verify had issues. QR URL: " + (lastDecodedUrl || "unknown"), "error");
+      showBanner("Auto-verify had issues. Check the verification tab.", "error");
     } else if (msg.type === "MANUAL_SCAN") {
       lastDecodedUrl = "";
+      triedAlternatives = false;
       scanForQrCode();
     }
   });

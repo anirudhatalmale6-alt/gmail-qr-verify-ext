@@ -1,7 +1,3 @@
-const MOBILE_UA =
-  "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.71 Mobile Safari/537.36";
-
-const MOBILE_UA_RULE_ID = 1;
 let verifyTabId = null;
 let originTabId = null;
 let qrUrl = "";
@@ -10,76 +6,13 @@ function log(msg) {
   console.log("[Gmail QR Verify BG]", msg);
 }
 
-async function setMobileUARule(tabId) {
-  try {
-    await chrome.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: [MOBILE_UA_RULE_ID],
-      addRules: [
-        {
-          id: MOBILE_UA_RULE_ID,
-          priority: 1,
-          action: {
-            type: "modifyHeaders",
-            requestHeaders: [
-              {
-                header: "User-Agent",
-                operation: "set",
-                value: MOBILE_UA,
-              },
-              {
-                header: "Sec-CH-UA-Mobile",
-                operation: "set",
-                value: "?1",
-              },
-              {
-                header: "Sec-CH-UA-Platform",
-                operation: "set",
-                value: '"Android"',
-              },
-              {
-                header: "Sec-CH-UA-Platform-Version",
-                operation: "set",
-                value: '"14.0"',
-              },
-            ],
-          },
-          condition: {
-            tabIds: [tabId],
-            resourceTypes: [
-              "main_frame",
-              "sub_frame",
-              "xmlhttprequest",
-              "script",
-              "stylesheet",
-              "image",
-              "other",
-            ],
-          },
-        },
-      ],
-    });
-    log(`Mobile UA rule set for tab ${tabId}`);
-  } catch (e) {
-    log(`Error setting UA rule: ${e.message}`);
-  }
-}
-
-async function removeMobileUARule() {
-  try {
-    await chrome.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: [MOBILE_UA_RULE_ID],
-    });
-    log("Mobile UA rule removed");
-  } catch (e) {}
-}
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "QR_DECODED") {
     log(`QR decoded: ${message.url}`);
     qrUrl = message.url;
     originTabId = sender.tab ? sender.tab.id : null;
 
-    openMobileVerifyTab(message.url)
+    openVerifyTab(message.url)
       .then(() => sendResponse({ success: true }))
       .catch((e) => {
         log(`Error: ${e.message}`);
@@ -89,8 +22,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "MOBILE_VERIFY_STATUS") {
-    log(`Mobile verify status: ${message.status}`);
+  if (message.type === "VERIFY_TAB_STATUS") {
+    log(`Verify tab status: ${message.status} - ${message.details}`);
     handleVerifyStatus(message.status, message.details);
   }
 
@@ -112,16 +45,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-async function openMobileVerifyTab(url) {
+async function openVerifyTab(url) {
   const tab = await chrome.tabs.create({
     url: url,
-    active: false,
+    active: true,
   });
 
   verifyTabId = tab.id;
-  await setMobileUARule(tab.id);
 
-  log(`Opened mobile verify tab ${tab.id} for: ${url}`);
+  log(`Opened verify tab ${tab.id} (desktop mode, no mobile UA) for: ${url}`);
 
   await chrome.storage.local.set({
     verifyTabId: tab.id,
@@ -129,22 +61,6 @@ async function openMobileVerifyTab(url) {
     originTabId: originTabId,
     startTime: Date.now(),
   });
-
-  setTimeout(() => {
-    injectMobileVerifyScript(tab.id);
-  }, 3000);
-}
-
-async function injectMobileVerifyScript(tabId) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      files: ["mobile-verify.js"],
-    });
-    log(`Injected mobile-verify.js into tab ${tabId}`);
-  } catch (e) {
-    log(`Could not inject script: ${e.message}`);
-  }
 }
 
 function handleVerifyStatus(status, details) {
@@ -153,6 +69,7 @@ function handleVerifyStatus(status, details) {
 
     if (originTabId) {
       chrome.tabs.sendMessage(originTabId, { type: "VERIFICATION_COMPLETE" });
+      chrome.tabs.update(originTabId, { active: true });
     }
 
     setTimeout(async () => {
@@ -161,7 +78,6 @@ function handleVerifyStatus(status, details) {
           await chrome.tabs.remove(verifyTabId);
         } catch (e) {}
       }
-      await removeMobileUARule();
       verifyTabId = null;
     }, 2000);
   } else if (status === "failed" || status === "error") {
@@ -177,14 +93,6 @@ function handleVerifyStatus(status, details) {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === verifyTabId) {
-    removeMobileUARule();
     verifyTabId = null;
-  }
-});
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (tabId === verifyTabId && changeInfo.status === "complete") {
-    log(`Verify tab loaded, re-injecting mobile-verify.js`);
-    setTimeout(() => injectMobileVerifyScript(tabId), 1000);
   }
 });
