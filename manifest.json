@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Gmail QR Auto-Verify",
-  "version": "1.2.0",
-  "description": "Handles Google QR verification during account creation",
+  "version": "2.0.0",
+  "description": "Scan and decode Google QR verification codes",
   "permissions": [
     "activeTab",
     "scripting",
@@ -16,18 +16,6 @@
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://accounts.google.com/lifecycle/steps/signup/mophoneverification*",
-        "https://accounts.google.com/lifecycle/steps/signup/phoneverification*",
-        "https://accounts.google.com/lifecycle/steps/signup/deviceverification*"
-      ],
-      "js": ["jsqr.js", "content.js"],
-      "run_at": "document_idle",
-      "all_frames": false
-    }
-  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
@@ -40,5 +28,11 @@
     "16": "icon16.png",
     "48": "icon48.png",
     "128": "icon128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["jsqr.js"],
+      "matches": ["https://accounts.google.com/*"]
+    }
+  ]
 }

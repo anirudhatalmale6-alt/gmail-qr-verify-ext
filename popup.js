@@ -1,80 +1,80 @@
-const statusDot = document.getElementById("statusDot");
-const statusText = document.getElementById("statusText");
-const urlCard = document.getElementById("urlCard");
-const qrUrlEl = document.getElementById("qrUrl");
-const rescanBtn = document.getElementById("rescanBtn");
-const openUrlBtn = document.getElementById("openUrlBtn");
-const altResults = document.getElementById("altResults");
-const altResultsList = document.getElementById("altResultsList");
+const scanBtn = document.getElementById("scanBtn");
+const dot = document.getElementById("dot");
+const statusMsg = document.getElementById("statusMsg");
+const errorMsg = document.getElementById("errorMsg");
+const resultSection = document.getElementById("resultSection");
+const urlBox = document.getElementById("urlBox");
+const openBtn = document.getElementById("openBtn");
 
-qrUrlEl.addEventListener("click", () => {
-  navigator.clipboard.writeText(qrUrlEl.textContent).then(() => {
-    qrUrlEl.style.border = "1px solid #66bb6a";
-    setTimeout(() => (qrUrlEl.style.border = "none"), 1000);
-  });
-});
+scanBtn.addEventListener("click", async () => {
+  scanBtn.disabled = true;
+  scanBtn.textContent = "Scanning...";
+  dot.className = "dot dot-scanning";
+  statusMsg.textContent = "Scanning page for QR code...";
+  errorMsg.classList.add("hidden");
+  resultSection.classList.add("hidden");
 
-function updateStatus(status, text, url) {
-  statusText.textContent = text;
-  statusDot.className = "dot";
-  statusDot.classList.add(
-    status === "idle" ? "dot-idle" : status === "decoded" ? "dot-active" : "dot-working"
-  );
-
-  if (url) {
-    urlCard.style.display = "block";
-    qrUrlEl.textContent = url;
-    openUrlBtn.style.display = "block";
-    openUrlBtn.onclick = () => {
-      chrome.runtime.sendMessage({ type: "OPEN_QR_URL" });
-    };
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) {
+    showError("No active tab found");
+    return;
   }
-}
 
-function showAltResults(results) {
-  if (!results || results.length === 0) return;
-  altResults.style.display = "block";
-  altResultsList.innerHTML = "";
+  chrome.runtime.sendMessage({ type: "SCAN_QR", tabId: tab.id });
 
-  results.forEach((r) => {
-    const div = document.createElement("div");
-    if (r.error) {
-      div.textContent = `${r.url.split("/").pop()} - Error`;
-    } else {
-      const phoneTag = r.hasPhoneInput
-        ? '<span class="tag tag-yes">PHONE INPUT</span>'
-        : '<span class="tag tag-no">no input</span>';
-      const redirectTag = r.isRedirectBack
-        ? '<span class="tag tag-no">redirect</span>'
-        : '<span class="tag tag-yes">different page</span>';
-      div.innerHTML = `${r.url.split("/signup/")[1] || r.url.substring(0, 40)} ${phoneTag} ${redirectTag}`;
-    }
-    altResultsList.appendChild(div);
-  });
-}
+  let checks = 0;
+  const poll = setInterval(() => {
+    checks++;
+    chrome.runtime.sendMessage({ type: "GET_STATUS" }, (resp) => {
+      if (!resp) return;
 
-function refresh() {
-  chrome.runtime.sendMessage({ type: "GET_STATUS" }, (response) => {
-    if (!response) {
-      updateStatus("idle", "Idle - navigate to a QR verification page");
-      return;
-    }
-
-    if (response.qrUrl) {
-      updateStatus("decoded", "QR code decoded", response.qrUrl);
-    } else {
-      updateStatus("idle", "Idle - navigate to a QR verification page");
-    }
-
-    if (response.altUrlResults) {
-      showAltResults(response.altUrlResults);
-    }
-  });
-}
-
-rescanBtn.addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "RETRY_SCAN" });
+      if (resp.scanStatus === "decoded" && resp.qrUrl) {
+        clearInterval(poll);
+        showDecoded(resp.qrUrl);
+      } else if (resp.scanStatus === "error") {
+        clearInterval(poll);
+        showError(resp.scanError);
+      } else if (checks > 15) {
+        clearInterval(poll);
+        showError("Scan timed out. Make sure the QR code is visible on the page.");
+      }
+    });
+  }, 500);
 });
 
-refresh();
-setInterval(refresh, 3000);
+urlBox.addEventListener("click", () => {
+  navigator.clipboard.writeText(urlBox.textContent).then(() => {
+    urlBox.classList.add("copied");
+    setTimeout(() => urlBox.classList.remove("copied"), 1500);
+  });
+});
+
+openBtn.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "OPEN_URL", url: urlBox.textContent });
+});
+
+function showDecoded(url) {
+  scanBtn.disabled = false;
+  scanBtn.textContent = "Scan QR Code Now";
+  dot.className = "dot dot-decoded";
+  statusMsg.innerHTML = '<span class="success-text">QR Code decoded successfully!</span>';
+  errorMsg.classList.add("hidden");
+  resultSection.classList.remove("hidden");
+  urlBox.textContent = url;
+}
+
+function showError(msg) {
+  scanBtn.disabled = false;
+  scanBtn.textContent = "Scan QR Code Now";
+  dot.className = "dot dot-error";
+  statusMsg.textContent = "Scan failed";
+  errorMsg.textContent = msg;
+  errorMsg.classList.remove("hidden");
+  resultSection.classList.add("hidden");
+}
+
+chrome.runtime.sendMessage({ type: "GET_STATUS" }, (resp) => {
+  if (resp && resp.scanStatus === "decoded" && resp.qrUrl) {
+    showDecoded(resp.qrUrl);
+  }
+});
